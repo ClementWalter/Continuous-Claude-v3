@@ -312,11 +312,33 @@ def run_update() -> None:
         console.print(f"  [green]OK[/green] Applied {applied} file(s)")
 
     # Step 4: Update pip packages (TLDR, etc.)
-    console.print("\n[bold]Step 4/5: Updating pip packages...[/bold]")
+    console.print("\n[bold]Step 4/5: Updating TLDR...[/bold]")
 
-    # Check if TLDR is installed and update it
-    if shutil.which("tldr"):
-        console.print("  Updating TLDR...")
+    # Check for local dev install first (monorepo setup)
+    tldr_local_venv = opc_dir / "packages" / "tldr-code" / ".venv"
+    tldr_local_pkg = opc_dir / "packages" / "tldr-code"
+
+    if tldr_local_venv.exists() and (tldr_local_pkg / "pyproject.toml").exists():
+        # Dev install - reinstall from local source (git pull already updated it)
+        console.print("  [dim]Detected local dev install[/dim]")
+        console.print("  Reinstalling from local source...")
+        try:
+            result = subprocess.run(
+                ["uv", "pip", "install", "-e", "."],
+                cwd=tldr_local_pkg,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            if result.returncode == 0:
+                console.print("  [green]OK[/green] TLDR dev install updated")
+            else:
+                console.print(f"  [yellow]WARN[/yellow] {result.stderr[:100]}")
+        except Exception as e:
+            console.print(f"  [yellow]WARN[/yellow] {e}")
+    elif shutil.which("tldr"):
+        # PyPI install - update from PyPI
+        console.print("  Updating from PyPI...")
         try:
             result = subprocess.run(
                 ["uv", "pip", "install", "--upgrade", "llm-tldr"],
