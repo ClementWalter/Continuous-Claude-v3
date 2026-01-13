@@ -578,6 +578,113 @@ def install_opc_integration(
     return result
 
 
+def install_opc_integration_symlink(
+    target_dir: Path,
+    opc_source: Path,
+) -> dict[str, Any]:
+    """Install OPC integration using symlinks instead of copies.
+
+    Creates symlinks from ~/.claude/{rules,skills,hooks,agents} to the
+    source repo's .claude/ directory. This allows:
+    - Changes to auto-sync between user config and repo
+    - Easy contribution back to the project
+    - No re-installation needed after git pull
+
+    Args:
+        target_dir: Target .claude directory (e.g., ~/.claude/)
+        opc_source: Source OPC .claude directory
+
+    Returns:
+        dict with keys: success, symlinked_dirs, error
+    """
+    import os
+
+    result = {
+        "success": False,
+        "symlinked_dirs": [],
+        "backed_up_dirs": [],
+        "error": None,
+    }
+
+    # Directories to symlink
+    symlink_dirs = ["rules", "skills", "hooks", "agents"]
+
+    try:
+        # Ensure target exists
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create backup directory
+        backup_dir = target_dir / "backups" / datetime.now().strftime("%Y%m%d-%H%M%S")
+        backup_dir.mkdir(parents=True, exist_ok=True)
+
+        for dir_name in symlink_dirs:
+            source_path = opc_source / dir_name
+            target_path = target_dir / dir_name
+
+            if not source_path.exists():
+                continue
+
+            # Backup existing directory if it exists and is not a symlink
+            if target_path.exists() and not target_path.is_symlink():
+                backup_path = backup_dir / dir_name
+                shutil.copytree(target_path, backup_path)
+                result["backed_up_dirs"].append(dir_name)
+                shutil.rmtree(target_path)
+            elif target_path.is_symlink():
+                # Remove existing symlink
+                target_path.unlink()
+
+            # Create symlink
+            os.symlink(source_path, target_path)
+            result["symlinked_dirs"].append(dir_name)
+
+        # Copy (not symlink) settings.json - user may want to customize
+        opc_settings_path = opc_source / "settings.json"
+        target_settings_path = target_dir / "settings.json"
+        if opc_settings_path.exists():
+            shutil.copy2(opc_settings_path, target_settings_path)
+
+        # Copy servers, runtime, plugins, scripts (these are less likely to be edited)
+        # Users can manually symlink these if needed
+        for copy_dir in ["servers", "runtime", "plugins"]:
+            src = opc_source / copy_dir
+            dst = target_dir / copy_dir
+            if src.exists():
+                if dst.exists():
+                    shutil.rmtree(dst)
+                shutil.copytree(src, dst)
+
+        # Copy scripts (same as regular install)
+        opc_scripts_core = opc_source.parent / "opc" / "scripts" / "core"
+        target_scripts_core = target_dir / "scripts" / "core"
+        if opc_scripts_core.exists():
+            target_scripts_core.parent.mkdir(parents=True, exist_ok=True)
+            if target_scripts_core.exists():
+                shutil.rmtree(target_scripts_core)
+            shutil.copytree(opc_scripts_core, target_scripts_core)
+
+        opc_scripts_math = opc_source.parent / "opc" / "scripts" / "math"
+        target_scripts_math = target_dir / "scripts" / "math"
+        if opc_scripts_math.exists():
+            if target_scripts_math.exists():
+                shutil.rmtree(target_scripts_math)
+            shutil.copytree(opc_scripts_math, target_scripts_math)
+
+        opc_scripts_tldr = opc_source.parent / "opc" / "scripts" / "tldr"
+        target_scripts_tldr = target_dir / "scripts" / "tldr"
+        if opc_scripts_tldr.exists():
+            if target_scripts_tldr.exists():
+                shutil.rmtree(target_scripts_tldr)
+            shutil.copytree(opc_scripts_tldr, target_scripts_tldr)
+
+        result["success"] = True
+
+    except Exception as e:
+        result["error"] = str(e)
+
+    return result
+
+
 def get_platform_info() -> dict[str, str]:
     """Get current platform information.
 

@@ -631,6 +631,7 @@ async def run_setup_wizard() -> None:
         get_global_claude_dir,
         get_opc_integration_source,
         install_opc_integration,
+        install_opc_integration_symlink,
     )
 
     claude_dir = get_global_claude_dir()  # Use global ~/.claude, not project-local
@@ -661,11 +662,15 @@ async def run_setup_wizard() -> None:
 
         # Offer choices
         console.print("\n[bold]Installation Options:[/bold]")
-        console.print("  1. Full install (backup existing, install OPC, merge non-conflicting)")
-        console.print("  2. Fresh install (backup existing, install OPC only)")
-        console.print("  3. Skip (keep existing configuration)")
+        console.print("  1. Full install (backup existing, copy OPC, merge non-conflicting)")
+        console.print("  2. Fresh install (backup existing, copy OPC only)")
+        console.print("  3. [cyan]Symlink install[/cyan] (link to repo - best for contributors)")
+        console.print("  4. Skip (keep existing configuration)")
+        console.print("")
+        console.print("  [dim]Symlink mode links rules/skills/hooks/agents to the repo.[/dim]")
+        console.print("  [dim]Changes sync automatically; great for contributing back.[/dim]")
 
-        choice = Prompt.ask("Choose option", choices=["1", "2", "3"], default="1")
+        choice = Prompt.ask("Choose option", choices=["1", "2", "3", "4"], default="1")
 
         if choice in ("1", "2"):
             # Backup first
@@ -673,7 +678,7 @@ async def run_setup_wizard() -> None:
             if backup_path:
                 console.print(f"  [green]OK[/green] Backup created: {backup_path.name}")
 
-            # Install
+            # Install (copy mode)
             merge = choice == "1"
             result = install_opc_integration(
                 claude_dir,
@@ -705,11 +710,43 @@ async def run_setup_wizard() -> None:
                     console.print("  [dim]You can build manually: cd ~/.claude/hooks && npm install && npm run build[/dim]")
             else:
                 console.print(f"  [red]ERROR[/red] {result.get('error', 'Unknown error')}")
+        elif choice == "3":
+            # Symlink mode
+            result = install_opc_integration_symlink(claude_dir, opc_source)
+
+            if result["success"]:
+                console.print(f"  [green]OK[/green] Symlinked: {', '.join(result['symlinked_dirs'])}")
+                if result["backed_up_dirs"]:
+                    console.print(f"  [green]OK[/green] Backed up: {', '.join(result['backed_up_dirs'])}")
+                console.print("  [dim]Changes in ~/.claude/ now sync to repo automatically[/dim]")
+
+                # Build TypeScript hooks
+                console.print("  Building TypeScript hooks...")
+                hooks_dir = claude_dir / "hooks"
+                build_success, build_msg = build_typescript_hooks(hooks_dir)
+                if build_success:
+                    console.print(f"  [green]OK[/green] {build_msg}")
+                else:
+                    console.print(f"  [yellow]WARN[/yellow] {build_msg}")
+                    console.print("  [dim]You can build manually: cd ~/.claude/hooks && npm install && npm run build[/dim]")
+            else:
+                console.print(f"  [red]ERROR[/red] {result.get('error', 'Unknown error')}")
         else:
             console.print("  Skipped integration installation")
     else:
-        # Clean install
-        if Confirm.ask("Install Claude Code integration (hooks, skills, rules)?", default=True):
+        # Clean install - offer copy vs symlink
+        console.print("  No existing configuration found.")
+        console.print("\n[bold]Installation Mode:[/bold]")
+        console.print("  1. Copy install (default - copies files to ~/.claude/)")
+        console.print("  2. [cyan]Symlink install[/cyan] (links to repo - best for contributors)")
+        console.print("  3. Skip")
+        console.print("")
+        console.print("  [dim]Symlink mode links rules/skills/hooks/agents to the repo.[/dim]")
+        console.print("  [dim]Changes sync automatically; great for contributing back.[/dim]")
+
+        choice = Prompt.ask("Choose mode", choices=["1", "2", "3"], default="1")
+
+        if choice == "1":
             opc_source = get_opc_integration_source()
             result = install_opc_integration(claude_dir, opc_source)
 
@@ -731,6 +768,27 @@ async def run_setup_wizard() -> None:
                     console.print("  [dim]You can build manually: cd ~/.claude/hooks && npm install && npm run build[/dim]")
             else:
                 console.print(f"  [red]ERROR[/red] {result.get('error', 'Unknown error')}")
+        elif choice == "2":
+            opc_source = get_opc_integration_source()
+            result = install_opc_integration_symlink(claude_dir, opc_source)
+
+            if result["success"]:
+                console.print(f"  [green]OK[/green] Symlinked: {', '.join(result['symlinked_dirs'])}")
+                console.print("  [dim]Changes in ~/.claude/ now sync to repo automatically[/dim]")
+
+                # Build TypeScript hooks
+                console.print("  Building TypeScript hooks...")
+                hooks_dir = claude_dir / "hooks"
+                build_success, build_msg = build_typescript_hooks(hooks_dir)
+                if build_success:
+                    console.print(f"  [green]OK[/green] {build_msg}")
+                else:
+                    console.print(f"  [yellow]WARN[/yellow] {build_msg}")
+                    console.print("  [dim]You can build manually: cd ~/.claude/hooks && npm install && npm run build[/dim]")
+            else:
+                console.print(f"  [red]ERROR[/red] {result.get('error', 'Unknown error')}")
+        else:
+            console.print("  Skipped integration installation")
 
     # Step 8: Math Features (Optional)
     console.print("\n[bold]Step 8/12: Math Features (Optional)[/bold]")
