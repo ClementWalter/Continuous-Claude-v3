@@ -12,12 +12,18 @@
  * - queryPipelineArtifacts(): Query pipeline artifacts for upstream context
  */
 
-import { spawnSync } from 'child_process';
-import type { QueryResult } from './types.js';
-import { requireOpcDir } from './opc-path.js';
+import { spawnSync } from "child_process";
+import { requireOpcDir } from "./opc-path.js";
+import type { QueryResult } from "./types.js";
 
 // Re-export SAFE_ID_PATTERN and isValidId from pattern-router for convenience
-export { SAFE_ID_PATTERN, isValidId } from './pattern-router.js';
+export { isValidId, SAFE_ID_PATTERN } from "./pattern-router.js";
+
+// Logging disabled - Claude Code interprets stderr as hook error
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function log(_operation: string, _details: Record<string, unknown> = {}): void {
+  // Disabled: Claude Code treats any stderr output as a hook error
+}
 
 /**
  * Get the PostgreSQL connection string.
@@ -28,9 +34,21 @@ export { SAFE_ID_PATTERN, isValidId } from './pattern-router.js';
  * @returns PostgreSQL connection string
  */
 export function getPgConnectionString(): string {
-  return process.env.OPC_POSTGRES_URL ||
+  const envVar = process.env.OPC_POSTGRES_URL
+    ? "OPC_POSTGRES_URL"
+    : process.env.DATABASE_URL
+      ? "DATABASE_URL"
+      : "default";
+  const connString =
+    process.env.OPC_POSTGRES_URL ||
     process.env.DATABASE_URL ||
-    'postgresql://claude:claude_dev@localhost:5432/continuous_claude';
+    "postgresql://claude:claude_dev@localhost:5432/continuous_claude";
+
+  // Mask password in logs
+  const maskedConn = connString.replace(/:([^:@]+)@/, ":***@");
+  log("getPgConnectionString", { source: envVar, connection: maskedConn });
+
+  return connString;
 }
 
 /**
@@ -43,8 +61,29 @@ export function getPgConnectionString(): string {
  * @param args - Arguments passed to Python (sys.argv[1], sys.argv[2], ...)
  * @returns QueryResult with success, stdout, and stderr
  */
-export function runPgQuery(pythonCode: string, args: string[] = []): QueryResult {
+export function runPgQuery(
+  pythonCode: string,
+  args: string[] = [],
+): QueryResult {
   const opcDir = requireOpcDir();
+
+  // Extract operation name from Python code (first function or table name)
+  const operationMatch = pythonCode.match(
+    /async def (\w+)|CREATE TABLE.*?(\w+)|INSERT INTO (\w+)|SELECT.*?FROM (\w+)/i,
+  );
+  const operation =
+    operationMatch?.[1] ||
+    operationMatch?.[2] ||
+    operationMatch?.[3] ||
+    operationMatch?.[4] ||
+    "unknown";
+
+  log("runPgQuery:start", {
+    operation,
+    opcDir,
+    argsCount: args.length,
+    args: args.map((a) => (a.length > 50 ? a.slice(0, 50) + "..." : a)),
+  });
 
   // Wrap the Python code to use asyncio.run() for async queries
   const wrappedCode = `
@@ -61,25 +100,53 @@ ${pythonCode}
 `;
 
   try {
-    const result = spawnSync('uv', ['run', 'python', '-c', wrappedCode, ...args], {
-      encoding: 'utf-8',
-      maxBuffer: 1024 * 1024,
+    const connString = getPgConnectionString();
+    log("runPgQuery:spawning", {
+      command: "uv run python -c <code>",
       cwd: opcDir,
-      env: {
-        ...process.env,
-        OPC_POSTGRES_URL: getPgConnectionString(),
-      },
     });
 
-    return {
+    const startTime = Date.now();
+    const result = spawnSync(
+      "uv",
+      ["run", "python", "-c", wrappedCode, ...args],
+      {
+        encoding: "utf-8",
+        maxBuffer: 1024 * 1024,
+        cwd: opcDir,
+        env: {
+          ...process.env,
+          OPC_POSTGRES_URL: connString,
+        },
+      },
+    );
+    const duration = Date.now() - startTime;
+
+    const queryResult = {
       success: result.status === 0,
-      stdout: result.stdout?.trim() || '',
-      stderr: result.stderr || '',
+      stdout: result.stdout?.trim() || "",
+      stderr: result.stderr || "",
     };
+
+    log("runPgQuery:complete", {
+      operation,
+      success: queryResult.success,
+      exitCode: result.status,
+      durationMs: duration,
+      stdoutLength: queryResult.stdout.length,
+      stderrLength: queryResult.stderr.length,
+      ...(queryResult.stderr && { stderr: queryResult.stderr.slice(0, 200) }),
+    });
+
+    return queryResult;
   } catch (err) {
+    log("runPgQuery:error", {
+      operation,
+      error: String(err),
+    });
     return {
       success: false,
-      stdout: '',
+      stdout: "",
       stderr: String(err),
     };
   }
@@ -99,7 +166,7 @@ ${pythonCode}
 export function queryBroadcasts(
   swarmId: string,
   agentId: string,
-  limit: number = 10
+  limit: number = 10,
 ): { success: boolean; broadcasts: BroadcastMessage[] } {
   const pythonCode = `
 from scripts.agentica_patterns.coordination_pg import CoordinationDBPg
@@ -139,7 +206,7 @@ asyncio.run(main())
   }
 
   try {
-    const broadcasts = JSON.parse(result.stdout || '[]') as BroadcastMessage[];
+    const broadcasts = JSON.parse(result.stdout || "[]") as BroadcastMessage[];
     return { success: true, broadcasts };
   } catch {
     return { success: false, broadcasts: [] };
@@ -157,7 +224,7 @@ asyncio.run(main())
  */
 export function queryPipelineArtifacts(
   pipelineId: string,
-  currentStage: number
+  currentStage: number,
 ): { success: boolean; artifacts: PipelineArtifact[] } {
   const pythonCode = `
 import asyncpg
@@ -203,7 +270,7 @@ asyncio.run(main())
   }
 
   try {
-    const artifacts = JSON.parse(result.stdout || '[]') as PipelineArtifact[];
+    const artifacts = JSON.parse(result.stdout || "[]") as PipelineArtifact[];
     return { success: true, artifacts };
   } catch {
     return { success: false, artifacts: [] };
@@ -253,7 +320,7 @@ export function registerAgentPg(
   agentId: string,
   sessionId: string,
   pattern: string | null = null,
-  pid: number | null = null
+  pid: number | null = null,
 ): { success: boolean; error?: string } {
   const pythonCode = `
 from scripts.agentica_patterns.coordination_pg import CoordinationDBPg
@@ -283,16 +350,16 @@ asyncio.run(main())
   const args = [
     agentId,
     sessionId,
-    pattern || 'null',
-    pid !== null ? String(pid) : 'null',
+    pattern || "null",
+    pid !== null ? String(pid) : "null",
   ];
 
   const result = runPgQuery(pythonCode, args);
 
-  if (!result.success || result.stdout !== 'ok') {
+  if (!result.success || result.stdout !== "ok") {
     return {
       success: false,
-      error: result.stderr || result.stdout || 'Unknown error',
+      error: result.stderr || result.stdout || "Unknown error",
     };
   }
 
@@ -309,8 +376,8 @@ asyncio.run(main())
  */
 export function completeAgentPg(
   agentId: string,
-  status: string = 'completed',
-  errorMessage: string | null = null
+  status: string = "completed",
+  errorMessage: string | null = null,
 ): { success: boolean; error?: string } {
   const pythonCode = `
 from scripts.agentica_patterns.coordination_pg import CoordinationDBPg
@@ -335,18 +402,14 @@ async def main():
 asyncio.run(main())
 `;
 
-  const args = [
-    agentId,
-    status,
-    errorMessage || 'null',
-  ];
+  const args = [agentId, status, errorMessage || "null"];
 
   const result = runPgQuery(pythonCode, args);
 
-  if (!result.success || result.stdout !== 'ok') {
+  if (!result.success || result.stdout !== "ok") {
     return {
       success: false,
-      error: result.stderr || result.stdout || 'Unknown error',
+      error: result.stderr || result.stdout || "Unknown error",
     };
   }
 
@@ -385,8 +448,14 @@ export interface PipelineArtifact {
 export function registerSession(
   sessionId: string,
   project: string,
-  workingOn: string = ''
+  workingOn: string = "",
 ): { success: boolean; error?: string } {
+  log("registerSession:start", {
+    sessionId,
+    project,
+    workingOn: workingOn || "(empty)",
+  });
+
   const pythonCode = `
 import asyncpg
 import os
@@ -429,13 +498,16 @@ asyncio.run(main())
 
   const result = runPgQuery(pythonCode, [sessionId, project, workingOn]);
 
-  if (!result.success || result.stdout !== 'ok') {
+  if (!result.success || result.stdout !== "ok") {
+    const error = result.stderr || result.stdout || "Unknown error";
+    log("registerSession:failed", { sessionId, error });
     return {
       success: false,
-      error: result.stderr || result.stdout || 'Unknown error',
+      error,
     };
   }
 
+  log("registerSession:success", { sessionId });
   return { success: true };
 }
 
@@ -449,6 +521,8 @@ export function getActiveSessions(project?: string): {
   success: boolean;
   sessions: SessionInfo[];
 } {
+  log("getActiveSessions:start", { project: project || "(all projects)" });
+
   const pythonCode = `
 import asyncpg
 import os
@@ -498,16 +572,30 @@ async def main():
 asyncio.run(main())
 `;
 
-  const result = runPgQuery(pythonCode, [project || 'null']);
+  const result = runPgQuery(pythonCode, [project || "null"]);
 
   if (!result.success) {
+    log("getActiveSessions:failed", {
+      project: project || "(all)",
+      error: result.stderr,
+    });
     return { success: false, sessions: [] };
   }
 
   try {
-    const sessions = JSON.parse(result.stdout || '[]') as SessionInfo[];
+    const sessions = JSON.parse(result.stdout || "[]") as SessionInfo[];
+    log("getActiveSessions:success", {
+      project: project || "(all)",
+      sessionCount: sessions.length,
+      sessionIds: sessions.map((s) => s.id),
+    });
     return { success: true, sessions };
-  } catch {
+  } catch (e) {
+    log("getActiveSessions:parseError", {
+      project: project || "(all)",
+      error: String(e),
+      stdout: result.stdout,
+    });
     return { success: false, sessions: [] };
   }
 }
@@ -527,7 +615,7 @@ asyncio.run(main())
 export function checkFileClaim(
   filePath: string,
   project: string,
-  mySessionId: string
+  mySessionId: string,
 ): { claimed: boolean; claimedBy?: string; claimedAt?: string } {
   const pythonCode = `
 import asyncpg
@@ -595,7 +683,7 @@ asyncio.run(main())
 export function claimFile(
   filePath: string,
   project: string,
-  sessionId: string
+  sessionId: string,
 ): { success: boolean } {
   const pythonCode = `
 import asyncpg
@@ -624,7 +712,7 @@ asyncio.run(main())
 `;
 
   const result = runPgQuery(pythonCode, [filePath, project, sessionId]);
-  return { success: result.success && result.stdout === 'ok' };
+  return { success: result.success && result.stdout === "ok" };
 }
 
 // =============================================================================
@@ -643,7 +731,7 @@ export function broadcastFinding(
   sessionId: string,
   topic: string,
   finding: string,
-  relevantTo: string[] = []
+  relevantTo: string[] = [],
 ): { success: boolean } {
   const pythonCode = `
 import asyncpg
@@ -688,7 +776,7 @@ asyncio.run(main())
     finding,
     JSON.stringify(relevantTo),
   ]);
-  return { success: result.success && result.stdout === 'ok' };
+  return { success: result.success && result.stdout === "ok" };
 }
 
 /**
@@ -701,7 +789,7 @@ asyncio.run(main())
 export function getRelevantFindings(
   query: string,
   excludeSessionId: string,
-  limit: number = 5
+  limit: number = 5,
 ): { success: boolean; findings: FindingInfo[] } {
   const pythonCode = `
 import asyncpg
@@ -747,14 +835,18 @@ async def main():
 asyncio.run(main())
 `;
 
-  const result = runPgQuery(pythonCode, [query, excludeSessionId, String(limit)]);
+  const result = runPgQuery(pythonCode, [
+    query,
+    excludeSessionId,
+    String(limit),
+  ]);
 
   if (!result.success) {
     return { success: false, findings: [] };
   }
 
   try {
-    const findings = JSON.parse(result.stdout || '[]') as FindingInfo[];
+    const findings = JSON.parse(result.stdout || "[]") as FindingInfo[];
     return { success: true, findings };
   } catch {
     return { success: false, findings: [] };

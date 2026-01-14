@@ -299,7 +299,7 @@ function getCacheStatus(projectDir) {
 async function main() {
   const input = JSON.parse(readStdin());
   if (!["startup", "resume"].includes(input.source)) {
-    console.log("{}");
+    console.log(JSON.stringify({ result: "continue" }));
     return;
   }
   const projectDir = process.env.CLAUDE_PROJECT_DIR || input.cwd;
@@ -326,7 +326,7 @@ async function main() {
     }
   }
   if (!cache.exists && !warmStatus) {
-    console.log("{}");
+    console.log(JSON.stringify({ result: "continue" }));
     return;
   }
   const available = [];
@@ -343,8 +343,8 @@ async function main() {
   });
   const cacheInfo = cache.exists ? `${available.join(", ")}` : "building...";
   const message = `\u{1F4CA} TLDR cache${ageStr}${freshness}${warmStatus}: ${cacheInfo}${semanticWarning}`;
-  console.log(message);
+  console.log(JSON.stringify({ result: "continue", message }));
 }
 main().catch(() => {
-  console.log("{}");
+  console.log(JSON.stringify({ result: "continue" }));
 });

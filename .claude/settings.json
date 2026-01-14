@@ -94,7 +94,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash $CLAUDE_PROJECT_DIR/.claude/hooks/persist-project-dir.sh"
+            "command": "bash /Users/clementwalter/Documents/Continuous-Claude-v3/.claude/hooks/persist-project-dir.sh"
           },
           {
             "type": "command",

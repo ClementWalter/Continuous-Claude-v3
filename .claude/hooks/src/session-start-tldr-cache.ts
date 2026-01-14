@@ -90,7 +90,7 @@ async function main() {
 
   // Only run on startup/resume (not clear/compact)
   if (!['startup', 'resume'].includes(input.source)) {
-    console.log('{}');
+    console.log(JSON.stringify({ result: 'continue' }));
     return;
   }
 
@@ -127,7 +127,7 @@ async function main() {
 
   if (!cache.exists && !warmStatus) {
     // No cache and warm failed - silent exit
-    console.log('{}');
+    console.log(JSON.stringify({ result: 'continue' }));
     return;
   }
 
@@ -162,10 +162,10 @@ async function main() {
   const message = `📊 TLDR cache${ageStr}${freshness}${warmStatus}: ${cacheInfo}${semanticWarning}`;
 
   // Output as system reminder (not full context injection)
-  console.log(message);
+  console.log(JSON.stringify({ result: 'continue', message }));
 }
 
 main().catch(() => {
   // Silent fail - don't block session start
-  console.log('{}');
+  console.log(JSON.stringify({ result: 'continue' }));
 });

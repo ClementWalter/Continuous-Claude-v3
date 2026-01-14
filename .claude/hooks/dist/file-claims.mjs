@@ -37,11 +37,27 @@ function requireOpcDir() {
 }
 
 // src/shared/db-utils-pg.ts
+function log(_operation, _details = {}) {
+}
 function getPgConnectionString() {
-  return process.env.OPC_POSTGRES_URL || process.env.DATABASE_URL || "postgresql://claude:claude_dev@localhost:5432/continuous_claude";
+  const envVar = process.env.OPC_POSTGRES_URL ? "OPC_POSTGRES_URL" : process.env.DATABASE_URL ? "DATABASE_URL" : "default";
+  const connString = process.env.OPC_POSTGRES_URL || process.env.DATABASE_URL || "postgresql://claude:claude_dev@localhost:5432/continuous_claude";
+  const maskedConn = connString.replace(/:([^:@]+)@/, ":***@");
+  log("getPgConnectionString", { source: envVar, connection: maskedConn });
+  return connString;
 }
 function runPgQuery(pythonCode, args = []) {
   const opcDir = requireOpcDir();
+  const operationMatch = pythonCode.match(
+    /async def (\w+)|CREATE TABLE.*?(\w+)|INSERT INTO (\w+)|SELECT.*?FROM (\w+)/i
+  );
+  const operation = operationMatch?.[1] || operationMatch?.[2] || operationMatch?.[3] || operationMatch?.[4] || "unknown";
+  log("runPgQuery:start", {
+    operation,
+    opcDir,
+    argsCount: args.length,
+    args: args.map((a) => a.length > 50 ? a.slice(0, 50) + "..." : a)
+  });
   const wrappedCode = `
 import sys
 import os
@@ -55,21 +71,46 @@ os.chdir('${opcDir}')
 ${pythonCode}
 `;
   try {
-    const result = spawnSync("uv", ["run", "python", "-c", wrappedCode, ...args], {
-      encoding: "utf-8",
-      maxBuffer: 1024 * 1024,
-      cwd: opcDir,
-      env: {
-        ...process.env,
-        OPC_POSTGRES_URL: getPgConnectionString()
-      }
+    const connString = getPgConnectionString();
+    log("runPgQuery:spawning", {
+      command: "uv run python -c <code>",
+      cwd: opcDir
     });
-    return {
+    const startTime = Date.now();
+    const result = spawnSync(
+      "uv",
+      ["run", "python", "-c", wrappedCode, ...args],
+      {
+        encoding: "utf-8",
+        maxBuffer: 1024 * 1024,
+        cwd: opcDir,
+        env: {
+          ...process.env,
+          OPC_POSTGRES_URL: connString
+        }
+      }
+    );
+    const duration = Date.now() - startTime;
+    const queryResult = {
       success: result.status === 0,
       stdout: result.stdout?.trim() || "",
       stderr: result.stderr || ""
     };
+    log("runPgQuery:complete", {
+      operation,
+      success: queryResult.success,
+      exitCode: result.status,
+      durationMs: duration,
+      stdoutLength: queryResult.stdout.length,
+      stderrLength: queryResult.stderr.length,
+      ...queryResult.stderr && { stderr: queryResult.stderr.slice(0, 200) }
+    });
+    return queryResult;
   } catch (err) {
+    log("runPgQuery:error", {
+      operation,
+      error: String(err)
+    });
     return {
       success: false,
       stdout: "",

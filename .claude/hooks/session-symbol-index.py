@@ -34,9 +34,9 @@ def main():
                 stderr=subprocess.DEVNULL,
                 start_new_session=True  # Detach from parent (cross-platform nohup)
             )
-            print(json.dumps({'status': 'tldr_warming'}))
+            print(json.dumps({'result': 'continue', 'status': 'tldr_warming'}))
         except Exception:
-            print(json.dumps({'status': 'tldr_warm_failed'}))
+            print(json.dumps({'result': 'continue', 'status': 'tldr_warm_failed'}))
         return
 
     # Call graph exists - check if semantic index needed
@@ -50,13 +50,13 @@ def main():
                     stderr=subprocess.STDOUT,
                     start_new_session=True
                 )
-            print(json.dumps({'status': 'tldr_semantic_indexing'}))
+            print(json.dumps({'result': 'continue', 'status': 'tldr_semantic_indexing'}))
         except Exception:
-            print(json.dumps({'status': 'tldr_semantic_failed'}))
+            print(json.dumps({'result': 'continue', 'status': 'tldr_semantic_failed'}))
         return
 
     # Everything ready
-    print(json.dumps({'status': 'tldr_ready'}))
+    print(json.dumps({'result': 'continue', 'status': 'tldr_ready'}))
 
 if __name__ == '__main__':
     main()

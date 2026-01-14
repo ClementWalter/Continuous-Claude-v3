@@ -38,12 +38,22 @@ and user-level hooks (~/.claude/hooks), with project hooks taking precedence.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+
+# Configure logging - use DEBUG level when HOOK_LAUNCHER_DEBUG is set
+log_level = logging.DEBUG if os.environ.get("HOOK_LAUNCHER_DEBUG") else logging.INFO
+logging.basicConfig(
+    level=log_level,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    stream=sys.stderr,  # Log to stderr to keep stdout clean for JSON output
+)
+logger = logging.getLogger("hook_launcher")
 
 
 def expand_path(path: str) -> str:
@@ -57,15 +67,21 @@ def expand_path(path: str) -> str:
     Returns:
         Expanded absolute path string
     """
+    logger.debug("Expanding path: %s", path)
+    original_path = path
+
     # Expand ~ to home directory
     if path.startswith("~"):
         path = str(Path.home()) + path[1:]
+        logger.debug("Expanded ~ to home directory: %s", path)
 
     # Expand environment variables ($HOME, %USERPROFILE%, etc.)
     path = os.path.expandvars(path)
 
     # Normalize path separators for current platform
-    return str(Path(path))
+    result = str(Path(path))
+    logger.debug("Path expansion complete: %s -> %s", original_path, result)
+    return result
 
 
 def get_hooks_dirs() -> list[Path]:
@@ -115,7 +131,10 @@ def find_node() -> str | None:
     if sys.platform == "win32":
         common_paths = [
             Path(os.environ.get("PROGRAMFILES", "")) / "nodejs" / "node.exe",
-            Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "nodejs" / "node.exe",
+            Path(os.environ.get("LOCALAPPDATA", ""))
+            / "Programs"
+            / "nodejs"
+            / "node.exe",
         ]
         for p in common_paths:
             if p.exists():
@@ -173,8 +192,16 @@ def find_python() -> str | None:
     # On Windows, also check common install locations
     if sys.platform == "win32":
         common_paths = [
-            Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Python" / "Python311" / "python.exe",
-            Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Python" / "Python310" / "python.exe",
+            Path(os.environ.get("LOCALAPPDATA", ""))
+            / "Programs"
+            / "Python"
+            / "Python311"
+            / "python.exe",
+            Path(os.environ.get("LOCALAPPDATA", ""))
+            / "Programs"
+            / "Python"
+            / "Python310"
+            / "python.exe",
             Path(os.environ.get("PROGRAMFILES", "")) / "Python311" / "python.exe",
             Path(os.environ.get("PROGRAMFILES", "")) / "Python310" / "python.exe",
         ]
